@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test Drive · Tickets d'Aria</title>
+<style>
+:root{--bg:#F4F8F8;--card:#FFFFFF;--fg:#14262A;--muted:#5A6D72;--line:#D3DFE0;--fill:#8FD8D3;--on:#0B3B3A;--ok:#1D7A57;--okbg:#DDF4EA;--ko:#A3271F;--kobg:#FBE2DF}
+@media (prefers-color-scheme: dark){:root{--bg:#0F181A;--card:#172326;--fg:#E6EFEF;--muted:#9DB0B3;--line:#2B3B3D;--fill:#5DBDB6;--on:#082423;--ok:#8EE0BF;--okbg:#15332A;--ko:#F5A39B;--kobg:#3A1D1A}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:16px}
+main{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+h1{font-size:22px;margin:4px 0 0}
+.sub{color:var(--muted);margin:0;font-size:14px}
+section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px}
+h2{font-size:16px;margin:0}
+label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+input{font:inherit;font-size:15px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;width:100%}
+button{font:inherit;font-weight:600;min-height:48px;border-radius:12px;border:0;background:var(--fill);color:var(--on);cursor:pointer;width:100%}
+button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.who{font-size:14px;padding:8px 10px;border-radius:10px;background:var(--bg)}
+.radio{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:14px;color:var(--fg)}
+.radio input{width:auto}
+#log{display:flex;flex-direction:column;gap:6px;font-size:14px}
+.l{padding:8px 10px;border-radius:10px;background:var(--bg);word-break:break-word}
+.l.ok{background:var(--okbg);color:var(--ok)}
+.l.ko{background:var(--kobg);color:var(--ko)}
+details summary{cursor:pointer;font-weight:600}
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>Test Google Drive</h1>
+    <p class="sub">Vérifie que deux comptes Google lisent et écrivent dans le même dossier partagé. Aucune donnée n'est envoyée ailleurs que sur Google Drive.</p>
+  </div>
+
+  <section>
+    <details id="cfg-box">
+      <summary>Réglages (à remplir une fois)</summary>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
+        <label>ID client OAuth<input id="c-id" placeholder="123456-abc.apps.googleusercontent.com" autocomplete="off"></label>
+        <label>Clé API<input id="c-key" placeholder="AIzaSy…" autocomplete="off"></label>
+        <label>Numéro du projet<input id="c-app" inputmode="numeric" placeholder="123456789012" autocomplete="off"></label>
+        <fieldset style="border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:6px">
+          <legend style="font-size:13px;color:var(--muted);margin-bottom:4px">Niveau d'accès</legend>
+          <label class="radio"><input type="radio" name="scope" value="file" checked>Plan A : fichiers de l'application (recommandé)</label>
+          <label class="radio"><input type="radio" name="scope" value="full">Plan B : accès complet au Drive</label>
+        </fieldset>
+        <button id="b-save" class="ghost">Enregistrer les réglages</button>
+      </div>
+    </details>
+  </section>
+
+  <section>
+    <h2>1. Connexion</h2>
+    <div class="who" id="who">Pas connecté</div>
+    <button id="b-login">Se connecter avec Google</button>
+  </section>
+
+  <section>
+    <h2>2. Dossier partagé</h2>
+    <div class="who" id="folder">Aucun dossier choisi</div>
+    <button id="b-pick" disabled>Choisir le dossier</button>
+  </section>
+
+  <section>
+    <h2>3. Essais</h2>
+    <div class="row">
+      <button id="b-read" disabled>Lire le dossier</button>
+      <button id="b-write" disabled>Écrire un fichier</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Résultats</h2>
+    <div id="log"><div class="l">Les résultats de chaque essai s'affichent ici. Fais une capture d'écran de cette zone.</div></div>
+    <button id="b-clear" class="ghost">Effacer les résultats</button>
+  </section>
+</main>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js" async defer></script>
+<script>
+const $=id=>document.getElementById(id);
+const SCOPES={file:"https://www.googleapis.com/auth/drive.file",full:"https://www.googleapis.com/auth/drive"};
+let cfg={id:"",key:"",app:"",scope:"file"}, token=null, email="", folder=null, tokenClient=null, pickerReady=false;
+
+function store(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+function load(k){try{return localStorage.getItem(k)}catch(e){return null}}
+function log(msg,kind){const d=document.createElement("div");d.className="l "+(kind||"");
+  const t=new Date().toLocaleTimeString("fr-BE",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  d.textContent=t+" · "+msg;$("log").prepend(d)}
+
+function loadCfg(){
+  try{const c=JSON.parse(load("tdcfg")||"null");if(c)cfg=Object.assign(cfg,c)}catch(e){}
+  try{const f=JSON.parse(load("tdfolder")||"null");if(f)folder=f}catch(e){}
+  $("c-id").value=cfg.id;$("c-key").value=cfg.key;$("c-app").value=cfg.app;
+  document.querySelector(`input[name=scope][value=${cfg.scope}]`).checked=true;
+  if(!cfg.id||!cfg.key||!cfg.app)$("cfg-box").open=true;
+  if(folder)$("folder").textContent="Dossier : "+folder.name;
+}
+$("b-save").onclick=()=>{
+  cfg.id=$("c-id").value.trim();cfg.key=$("c-key").value.trim();cfg.app=$("c-app").value.trim();
+  cfg.scope=document.querySelector("input[name=scope]:checked").value;
+  if(!cfg.id.endsWith(".apps.googleusercontent.com")){log("L'ID client doit se terminer par .apps.googleusercontent.com.","ko");return}
+  if(!cfg.key.startsWith("AIza")){log("La clé API commence normalement par AIza.","ko");return}
+  if(!/^\d{6,}$/.test(cfg.app)){log("Le numéro du projet ne contient que des chiffres.","ko");return}
+  store("tdcfg",JSON.stringify(cfg));tokenClient=null;token=null;
+  $("cfg-box").open=false;log("Réglages enregistrés ("+(cfg.scope==="file"?"plan A":"plan B")+").","ok");refresh();
+};
+
+function refresh(){
+  $("b-pick").disabled=!token;
+  $("b-read").disabled=!token||!folder;$("b-write").disabled=!token||!folder;
+  $("who").textContent=token?"Connecté : "+email+" · "+(cfg.scope==="file"?"plan A":"plan B"):"Pas connecté";
+}
+
+$("b-login").onclick=()=>{
+  if(!cfg.id){log("Remplis d'abord les réglages.","ko");$("cfg-box").open=true;return}
+  if(!window.google||!google.accounts){log("La bibliothèque Google n'est pas encore chargée. Réessaie dans quelques secondes.","ko");return}
+  if(!tokenClient){
+    tokenClient=google.accounts.oauth2.initTokenClient({client_id:cfg.id,scope:SCOPES[cfg.scope]+" openid email",
+      callback:async r=>{
+        if(r.error){log("Connexion refusée : "+r.error+(r.error_description?" ("+r.error_description+")":""),"ko");return}
+        token=r.access_token;
+        try{const u=await fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+token}}).then(x=>x.json());email=u.email||"compte inconnu"}catch(e){email="compte inconnu"}
+        log("Connexion réussie : "+email,"ok");refresh();
+      },
+      error_callback:e=>log("Fenêtre de connexion fermée ou bloquée : "+(e.type||"erreur"),"ko")});
+  }
+  tokenClient.requestAccessToken({prompt:token?"":"consent"});
+};
+
+function ensurePicker(cb){
+  if(pickerReady)return cb();
+  if(!window.gapi){log("La bibliothèque Google Picker n'est pas encore chargée. Réessaie.","ko");return}
+  gapi.load("picker",{callback:()=>{pickerReady=true;cb()}});
+}
+$("b-pick").onclick=()=>ensurePicker(()=>{
+  const mine=new google.picker.DocsView(google.picker.ViewId.FOLDERS).setSelectFolderEnabled(true).setIncludeFolders(true).setOwnedByMe(true);
+  const shared=new google.picker.DocsView(google.picker.ViewId.FOLDERS).setSelectFolderEnabled(true).setIncludeFolders(true).setOwnedByMe(false);
+  const p=new google.picker.PickerBuilder()
+    .setTitle("Choisis le dossier partagé")
+    .addView(mine).addView(shared)
+    .setOAuthToken(token).setDeveloperKey(cfg.key).setAppId(cfg.app)
+    .setLocale("fr")
+    .setCallback(d=>{
+      if(d.action===google.picker.Action.PICKED){const f=d.docs[0];folder={id:f.id,name:f.name};store("tdfolder",JSON.stringify(folder));
+        $("folder").textContent="Dossier : "+f.name;log("Dossier choisi : "+f.name,"ok");refresh()}
+      else if(d.action===google.picker.Action.CANCEL)log("Choix du dossier annulé.");
+    }).build();
+  p.setVisible(true);
+});
+
+async function api(url,opt){
+  const r=await fetch(url,Object.assign({},opt,{headers:Object.assign({Authorization:"Bearer "+token},(opt&&opt.headers)||{})}));
+  if(r.status===401){token=null;refresh();throw new Error("session expirée, reconnecte-toi")}
+  if(!r.ok){let m="";try{const j=await r.json();m=j.error&&j.error.message||""}catch(e){}throw new Error("HTTP "+r.status+(m?" : "+m:""))}
+  return r;
+}
+$("b-read").onclick=async()=>{
+  try{
+    const q=encodeURIComponent(`'${folder.id}' in parents and trashed=false`);
+    const r=await api(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,owners(emailAddress),createdTime)&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true`);
+    const files=(await r.json()).files||[];
+    log(`Lecture du dossier : ${files.length} fichier(s) visible(s).`,files.length?"ok":"");
+    let other=0;
+    for(const f of files.slice(0,10)){
+      const owner=(f.owners&&f.owners[0]&&f.owners[0].emailAddress)||"?";
+      if(owner!==email)other++;
+      try{await api(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&supportsAllDrives=true`);log(`✓ ${f.name} (déposé par ${owner}) : contenu lisible`,"ok")}
+      catch(e){log(`✗ ${f.name} (déposé par ${owner}) : contenu illisible, ${e.message}`,"ko")}
+    }
+    if(files.length&&!other)log("Seuls tes propres fichiers sont visibles. Si l'autre compte a déjà écrit, ses fichiers sont invisibles pour toi : c'est le résultat à me transmettre.","ko");
+    if(other)log(`Tu vois ${other} fichier(s) déposé(s) par l'autre compte : le partage fonctionne dans ce sens.`,"ok");
+  }catch(e){log("Lecture impossible : "+e.message,"ko")}
+};
+$("b-write").onclick=async()=>{
+  try{
+    const now=new Date(), name=`test_${email.split("@")[0]}_${now.toISOString().slice(0,19).replace(/[:T]/g,"-")}.json`;
+    const meta={name,parents:[folder.id],mimeType:"application/json"};
+    const body={auteur:email,date:now.toISOString(),message:"Fichier de test de l'application Tickets d'Aria"};
+    const b="tdboundary"+Date.now();
+    const data=`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(body)}\r\n--${b}--`;
+    await api("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true",{method:"POST",headers:{"Content-Type":"multipart/related; boundary="+b},body:data});
+    log("Écriture réussie : "+name,"ok");
+  }catch(e){log("Écriture impossible : "+e.message,"ko")}
+};
+$("b-clear").onclick=()=>{$("log").innerHTML=""};
+loadCfg();refresh();
+</script>
+</body>
+</html>
